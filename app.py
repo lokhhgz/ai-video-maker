@@ -39,7 +39,8 @@ def generate_script_from_ai(api_key, topic, duration_sec):
     if est_sentences < 3: est_sentences = 3
     
     # 這裡改用最穩定的模型，成功率最高
-    models_to_try = ['gemini-1.5-flash', 'gemini-pro', 'gemini-1.5-pro-latest']
+    models_to_try = ['gemini-2.0-flash', 'gemini-flash-latest', 'gemini-pro-latest', 
+        'gemini-2.0-flash-lite', 'gemini-1.5-flash-latest']
     
     for model_name in models_to_try:
         try:
