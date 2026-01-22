@@ -5,34 +5,34 @@ import asyncio
 import edge_tts
 import json
 import random
+import gc # 垃圾回收機制
 import google.generativeai as genai
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, ColorClip
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 雲端設定區 =================
-st.set_page_config(page_title="AI 短影音工廠 (絕對成功版)", page_icon="🏆")
+st.set_page_config(page_title="AI 短影音工廠 (輕量版)", page_icon="⚡")
 
-# 🧹【強制清理】刪除可能損壞的字體檔
+# 📉 設定影片解析度 (540x960 省記憶體，防止當機)
+VIDEO_W, VIDEO_H = 540, 960 
+
+# 🧹 清理字體
 if os.path.exists("NotoSansTC-Bold.otf"):
     try:
         os.remove("NotoSansTC-Bold.otf")
-        print("已刪除舊字體檔")
     except:
         pass
 
-# 📥 獲取字體 (改用絕對安全的預設字體)
-def get_font(size=50):
-    # 直接回傳預設字體，雖然醜一點但絕不會報錯
+def get_font(size=30):
     return ImageFont.load_default()
 
 # 🧠 AI 寫腳本
 def generate_script_from_ai(api_key, topic, duration_sec):
     genai.configure(api_key=api_key)
-    est_sentences = int(int(duration_sec) / 4.5)
+    est_sentences = int(int(duration_sec) / 5) # 稍微減少句子數量，減輕負擔
     if est_sentences < 3: est_sentences = 3
     
-    # 使用你帳號裡確認有的模型
     models_to_try = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-pro-latest']
     
     for model_name in models_to_try:
@@ -61,7 +61,7 @@ def download_video(api_key, query, filename):
     headers = {"Authorization": api_key}
     params = {"query": query, "per_page": 1, "orientation": "portrait"}
     try:
-        r = requests.get(url, headers=headers, params=params, timeout=10)
+        r = requests.get(url, headers=headers, params=params, timeout=5)
         if r.status_code == 200:
             data = r.json()
             if data.get('videos'):
@@ -89,30 +89,26 @@ def run_tts(text, filename, voice, rate):
     except:
         return False
 
-# 🖼️ 字幕圖片 (簡化版，防止崩潰)
+# 🖼️ 字幕圖片
 def create_text_image(text, width, height):
     try:
         img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        font = get_font(50)
+        font = get_font(30) # 字體小一點配合解析度
         
-        # 簡單置中繪製，不做複雜運算以免報錯
-        # 預設字體不支援 getlength，所以我們用簡單估算
-        text_len = len(text) * 20 # 估算寬度
+        text_len = len(text) * 15 
         x = (width - text_len) / 2
         if x < 10: x = 10
-        y = height - 200
+        y = height - 150
         
-        # 畫黑底白字
         draw.text((x+2, y+2), text, font=font, fill="black")
         draw.text((x, y), text, font=font, fill="white")
         return np.array(img)
     except:
-        # 萬一畫圖失敗，回傳全透明圖 (至少影片不會掛掉)
         return np.array(Image.new('RGBA', (width, height), (0, 0, 0, 0)))
 
 # --- 主程式 ---
-st.title("🏆 AI 短影音工廠 (絕對成功版)")
+st.title("⚡ AI 短影音工廠 (輕量版)")
 
 with st.sidebar:
     st.header("⚙️ 設定")
@@ -125,14 +121,13 @@ with st.sidebar:
 
 topic = st.text_input("💡 主題", value="飛機的起源")
 
-if st.button("🚀 生成影片", type="primary"):
+if st.button("🚀 生成影片 (低負載模式)", type="primary"):
     if not gemini_key or not pexels_key:
         st.error("❌ 缺 Key")
         st.stop()
         
-    status = st.status("🧠 正在運作中...", expanded=True)
+    status = st.status("🧠 啟動輕量引擎...", expanded=True)
     
-    # 1. 劇本
     script_data = generate_script_from_ai(gemini_key, topic, duration)
     if not script_data:
         status.update(label="❌ 劇本失敗", state="error")
@@ -142,9 +137,8 @@ if st.button("🚀 生成影片", type="primary"):
     progress_bar = st.progress(0)
     clips = []
     
-    # 2. 製作
     for i, data in enumerate(script_data):
-        status.write(f"正在製作: {data['keyword']}...")
+        status.write(f"製作片段 {i+1}/{len(script_data)}: {data['keyword']}...")
         
         safe_kw = "".join([c for c in data['keyword'] if c.isalnum()])
         v_file = f"video_{safe_kw}.mp4"
@@ -153,29 +147,32 @@ if st.button("🚀 生成影片", type="primary"):
         download_video(pexels_key, data['keyword'], v_file)
         run_tts(data['text'], a_file, voice_role, speech_rate)
         
-        # === 🛡️ 全方位防護罩 ===
         try:
-            # 1. 聲音
+            # 1. 聲音處理
             a_clip = None
             try:
                 if os.path.exists(a_file) and os.path.getsize(a_file) > 100:
                     a_clip = AudioFileClip(a_file)
             except:
-                pass # 聲音壞了就靜音
+                pass 
             
-            # 2. 影片
+            # 2. 影片處理 (關鍵：使用較小的解析度)
             try:
                 if os.path.exists(v_file) and os.path.getsize(v_file) > 1000:
-                    v_clip = VideoFileClip(v_file).resize(newsize=(1080, 1920))
+                    # 縮小到 540x960，這會大幅減少記憶體消耗！
+                    v_clip = VideoFileClip(v_file).resize(newsize=(VIDEO_W, VIDEO_H))
                 else:
                     raise Exception("Video bad")
             except:
-                # 影片壞了就黑底
                 dur = a_clip.duration if a_clip else 3
-                v_clip = ColorClip(size=(1080, 1920), color=(0,0,0), duration=dur)
+                v_clip = ColorClip(size=(VIDEO_W, VIDEO_H), color=(0,0,0), duration=dur)
 
-            # 3. 對齊
+            # 3. 合成與清理
             final_dur = a_clip.duration if a_clip else v_clip.duration
+            
+            # 確保不會過長
+            if final_dur > 10: final_dur = 10 
+
             if v_clip.duration < final_dur:
                 v_clip = v_clip.loop(duration=final_dur)
             else:
@@ -184,35 +181,37 @@ if st.button("🚀 生成影片", type="primary"):
             if a_clip:
                 v_clip = v_clip.set_audio(a_clip)
 
-            # 4. 字幕 (加入防護)
             try:
-                # 這裡最關鍵！如果 create_text_image 失敗，這裡會抓住
-                txt_img = create_text_image(data['text'], 1080, 1920)
+                txt_img = create_text_image(data['text'], VIDEO_W, VIDEO_H)
                 txt_clip = ImageClip(txt_img).set_duration(final_dur)
                 clips.append(CompositeVideoClip([v_clip, txt_clip]))
-            except Exception as e:
-                # 萬一字幕真的不行，至少把沒字幕的影片加進去
-                print(f"字幕失敗: {e}")
+            except:
                 clips.append(v_clip)
+            
+            # 🧹【關鍵】強制回收記憶體，防止當機
+            del v_clip
+            del a_clip
+            if 'txt_clip' in locals(): del txt_clip
+            gc.collect() 
                 
         except Exception as e:
-            # 這是最後一道防線，如果連上面都穿透了，這句就跳過，但不崩潰
-            print(f"❌ 跳過片段 {i}: {e}")
+            print(f"❌ Skip: {e}")
             continue
         
         progress_bar.progress((i + 1) / len(script_data))
     
-    # 3. 最終合成
     if clips:
-        status.write("🎬 正在合成最終影片...")
+        status.write("🎬 正在輕量合成...")
         try:
-            final = concatenate_videoclips(clips)
+            # 使用 compose 方式合成，比較省記憶體
+            final = concatenate_videoclips(clips, method="compose")
             output_name = f"result_{random.randint(1000,9999)}.mp4"
-            final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac')
-            status.update(label="✨ 終於成功了！", state="complete")
+            # 使用 fast 預設，加快速度
+            final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast')
+            status.update(label="✨ 成功了！", state="complete")
             st.balloons()
             st.video(output_name)
         except Exception as e:
              st.error(f"合成失敗: {e}")
     else:
-        status.update(label="❌ 什麼都沒生出來", state="error")
+        status.update(label="❌ 失敗", state="error")
