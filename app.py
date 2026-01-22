@@ -11,7 +11,18 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 雲端設定區 =================
-st.set_page_config(page_title="AI 短影音工廠 (穩定版)", page_icon="🎬")
+st.set_page_config(page_title="AI 短影音工廠 (終極偵錯)", page_icon="🕵️‍♂️")
+
+# 🚨【偵探模式】顯示版本號
+import importlib.metadata
+try:
+    ver = importlib.metadata.version("google-generativeai")
+except:
+    ver = "無法取得"
+st.warning(f"🔍 偵測報告：\n1. Google AI 套件版本: {ver}\n2. Python 版本: {os.sys.version.split()[0]}")
+# ------------------------------------------------
+
+# 📥 自動下載中文字體 ... (後面照舊)
 
 # 📥 自動下載中文字體
 def download_font():
