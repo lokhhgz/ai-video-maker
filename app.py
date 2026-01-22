@@ -13,13 +13,13 @@ from moviepy.editor import (
     VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, 
     concatenate_videoclips, ColorClip, CompositeAudioClip
 )
-# 🚨 關鍵：引入音訊特效模組
+# 🚨 這是 BGM 循環與音量修正的核心模組
 from moviepy.audio.fx.all import audio_loop, volumex 
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 設定區 =================
-st.set_page_config(page_title="AI Shorts Maker (BGM Fixed)", page_icon="🎸")
+st.set_page_config(page_title="AI Shorts Maker (Perfect BGM)", page_icon="🎸")
 
 # 📉 解析度與 BGM 設定
 VIDEO_W, VIDEO_H = 540, 960 
@@ -45,10 +45,10 @@ def generate_script(api_key, topic, duration):
     est_sentences = int(int(duration) / 5)
     if est_sentences < 3: est_sentences = 3
     prompt = f"""
-    Create a short video script about: "{topic}".
+    Create a professional short video script about: "{topic}".
     Target duration: {duration} seconds.
     Generate exactly {est_sentences} short sentences (max 10 words each).
-    Return ONLY raw JSON array:
+    Return ONLY a raw JSON array:
     [{{"text": "Sentence...", "keyword": "Keyword"}}]
     """
     models = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-pro']
@@ -114,7 +114,7 @@ def run_tts_file(text, filename, voice, rate):
         return True
     except: return False
 
-# 🖼️ 製作字幕 (智慧換行版)
+# 🖼️ 製作字幕
 def create_subtitle(text, width, height):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -136,12 +136,13 @@ def create_subtitle(text, width, height):
     for i, line in enumerate(lines):
         line_w = draw.textlength(line, font=font)
         x, y = (width - line_w) / 2, start_y + (i * line_height)
-        draw.rectangle([x-8, y-4, x+line_w+8, y+line_height-8], fill=(0,0,0), 160)
+        # ✅ 已修正語法錯誤：將 160 放入 fill 括號內
+        draw.rectangle([x-8, y-4, x+line_w+8, y+line_height-8], fill=(0,0,0,160))
         draw.text((x, y), line, font=font, fill="white")
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🎸 AI Shorts Maker (BGM Fixed)")
+st.title("🎸 AI Shorts Maker (BGM Pro)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -160,8 +161,8 @@ with st.sidebar:
     use_bgm = st.checkbox("Enable Background Music", value=True)
     bgm_vol = st.slider("BGM Volume", 0.0, 0.5, 0.15, 0.05)
     
-    if st.button("🔊 Test Preview"):
-        audio_bytes = run_tts_bytes("Testing background music sync.", voice_role, f"{int((rate-1)*100):+d}%")
+    if st.button("🔊 Test Voice Now"):
+        audio_bytes = run_tts_bytes("Testing the background music system.", voice_role, f"{int((rate-1)*100):+d}%")
         if audio_bytes:
             b64 = base64.b64encode(audio_bytes).decode()
             st.markdown(f'<audio controls autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
@@ -171,7 +172,7 @@ with st.sidebar:
 
 # --- 右側主畫面 ---
 if "script" not in st.session_state: st.session_state.script = None
-topic = st.text_input("Topic", "The future of AI")
+topic = st.text_input("Topic", "The mystery of Ancient Egypt")
 
 if st.button("Step 1: Generate Script", type="primary"):
     with st.spinner("Brainstorming..."):
@@ -186,7 +187,7 @@ if st.session_state.script:
     st.divider()
 
     if st.button("Step 2: Render Final Video", type="primary"):
-        status = st.status("🎬 Processing...", expanded=True)
+        status = st.status("🎬 Building Video & Mixing BGM...", expanded=True)
         progress_bar = st.progress(0)
         clips = []
         
@@ -199,28 +200,33 @@ if st.session_state.script:
                 
                 try:
                     a_clip = AudioFileClip(a_file)
-                    v_clip = VideoFileClip(v_file).resize(newsize=(VIDEO_W, VIDEO_H)) if os.path.exists(v_file) and os.path.getsize(v_file) > 1000 else ColorClip(size=(VIDEO_W, VIDEO_H), color=(0,0,0), duration=a_clip.duration)
+                    # 處理影片：有下載成功就 resize，失敗就變黑底
+                    if os.path.exists(v_file) and os.path.getsize(v_file) > 1000:
+                        v_clip = VideoFileClip(v_file).resize(newsize=(VIDEO_W, VIDEO_H))
+                    else:
+                        v_clip = ColorClip(size=(VIDEO_W, VIDEO_H), color=(0,0,0), duration=a_clip.duration)
                     
-                    # 畫面循環與對齊
-                    v_clip = v_clip.loop(duration=a_clip.duration) if v_clip.duration < a_clip.duration else v_clip.subclip(0, a_clip.duration)
+                    final_dur = a_clip.duration
+                    # 對齊長度
+                    v_clip = v_clip.loop(duration=final_dur) if v_clip.duration < final_dur else v_clip.subclip(0, final_dur)
                     v_clip = v_clip.set_audio(a_clip)
-                    
                     # 字幕
-                    txt_clip = ImageClip(create_subtitle(data['text'], VIDEO_W, VIDEO_H)).set_duration(a_clip.duration)
+                    txt_clip = ImageClip(create_subtitle(data['text'], VIDEO_W, VIDEO_H)).set_duration(final_dur)
+                    
                     clips.append(CompositeVideoClip([v_clip, txt_clip]))
                     del v_clip, a_clip, txt_clip; gc.collect()
                 except: continue
                 progress_bar.progress((i+1)/len(st.session_state.script))
             
             if clips:
-                status.write("🎸 Final Mixing...")
+                status.write("🎸 Final Mixing & Exporting...")
                 final_video = concatenate_videoclips(clips, method="compose")
                 
                 if use_bgm:
                     download_bgm(BGM_URL, BGM_FILE)
                     if os.path.exists(BGM_FILE):
                         bgm = AudioFileClip(BGM_FILE)
-                        # 🔥 修正點：改用 audio_loop 函數
+                        # 🔥 修正點：使用 audio_loop 與 volumex 函數
                         bgm = audio_loop(bgm, duration=final_video.duration)
                         bgm = volumex(bgm, bgm_vol)
                         
@@ -231,9 +237,10 @@ if st.session_state.script:
                 final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast')
                 status.update(label="✅ Success!", state="complete")
                 
+                # 預覽與下載
                 col1, col2, col3 = st.columns([1, 2, 1])
                 with col2: st.video(output_path)
                 with open(output_path, "rb") as f:
-                    st.download_button("📥 Download Video", f, file_name="ai_video.mp4", mime="video/mp4", type="primary", use_container_width=True)
+                    st.download_button("📥 Download Final Video", f, file_name="ai_shorts.mp4", mime="video/mp4", type="primary", use_container_width=True)
                 st.balloons()
         except Exception as e: st.error(f"Render Error: {e}")
