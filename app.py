@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 雲端設定區 =================
-st.set_page_config(page_title="AI 短片製造廠", page_icon="🎬")
+st.set_page_config(page_title="AI AI 全自動短影音工廠", page_icon="🎬")
 
 # 📥 自動下載中文字體 (解決雲端亂碼問題)
 def download_font():
