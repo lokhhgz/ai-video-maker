@@ -7,42 +7,41 @@ import json
 import random
 import gc
 import textwrap
-import io # 新增：記憶體處理
 import google.generativeai as genai
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, ColorClip
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 設定區 =================
-st.set_page_config(page_title="AI Shorts Maker (Pro)", page_icon="🇺🇸")
+st.set_page_config(page_title="AI Shorts Maker (Final)", page_icon="🇺🇸")
 
 # 📉 解析度設定 (維持輕量化)
 VIDEO_W, VIDEO_H = 540, 960 
 
-# 🔤 字體設定 (嘗試下載漂亮的粗體字，失敗則用預設)
-FONT_URL = "https://github.com/google/fonts/raw/main/apache/robotoslab/RobotoSlab-Bold.ttf"
-FONT_FILE = "RobotoSlab-Bold.ttf"
-
-def get_font(size=40):
-    # 1. 如果沒有字體檔，先嘗試下載
-    if not os.path.exists(FONT_FILE):
-        try:
-            r = requests.get(FONT_URL, timeout=5)
-            with open(FONT_FILE, "wb") as f:
-                f.write(r.content)
-        except:
-            pass # 下載失敗就隨緣
-            
-    # 2. 嘗試讀取字體
-    try:
-        return ImageFont.truetype(FONT_FILE, size)
-    except:
-        # 3. 萬一真的不行，回傳系統預設 (雖然小，但不會崩潰)
-        return ImageFont.load_default()
+# 🔤 字體設定 (關鍵修改：使用系統字體，保證能變大)
+def get_font(size=80):
+    # 1. 優先尋找 Streamlit Cloud 內建的 Linux 字體 (DejaVuSans)
+    # 這是最穩定的方法，不需要下載
+    system_fonts = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "arial.ttf"
+    ]
+    
+    for path in system_fonts:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+                
+    # 2. 如果都沒有，才嘗試用預設 (雖然小，但至少不會崩潰)
+    return ImageFont.load_default()
 
 # 🧠 AI 寫英文腳本
 def generate_script(api_key, topic, duration):
     genai.configure(api_key=api_key)
+    # 句數稍微減少，讓每句話停留久一點
     est_sentences = int(int(duration) / 6)
     if est_sentences < 3: est_sentences = 3
     
@@ -90,29 +89,8 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (記憶體版) - 這是解決試聽失敗的關鍵
-async def get_voice_memory(text, voice, rate):
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
-    # 使用 BytesIO 在記憶體中接收數據
-    audio_stream = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_stream.write(chunk["data"])
-    audio_stream.seek(0) # 回到開頭
-    return audio_stream
-
-# 同步執行器
-def run_tts_memory(text, voice, rate):
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(get_voice_memory(text, voice, rate))
-    except Exception as e:
-        print(f"TTS Error: {e}")
-        return None
-
-# 🗣️ TTS (存檔版) - 用於合成影片
-def run_tts_file(text, filename, voice, rate):
+# 🗣️ TTS (同步版) - 用於試聽與合成
+def run_tts_sync(text, filename, voice, rate):
     async def _tts():
         communicate = edge_tts.Communicate(text, voice, rate=rate)
         await communicate.save(filename)
@@ -122,45 +100,42 @@ def run_tts_file(text, filename, voice, rate):
         loop.run_until_complete(_tts())
         loop.close()
         return True
-    except:
+    except Exception as e:
+        print(f"TTS Error: {e}")
         return False
 
-# 🖼️ 製作漂亮字幕 (半透明黑底 + 自動換行)
+# 🖼️ 製作超大字幕 (半透明黑底 + 自動換行)
 def create_subtitle(text, width, height):
-    # 創建透明畫布
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 設定字體 (變大！)
-    font_size = 40
+    # 這裡設定字體大小：80 (非常大！)
+    font_size = 80
     font = get_font(font_size)
     
-    # 自動換行 (每行約 25 個字)
-    wrapped_lines = textwrap.wrap(text, width=25)
+    # 自動換行：因為字變大了，所以每行字數要減少 (設為 15)
+    wrapped_lines = textwrap.wrap(text, width=15)
     
-    # 計算文字總高度
+    # 計算高度
     line_height = font_size + 10
-    total_text_height = len(wrapped_lines) * line_height
+    total_height = len(wrapped_lines) * line_height
+    start_y = height - total_height - 150 # 靠下顯示
     
-    # 決定起始 Y 座標 (放在下方 1/4 處)
-    start_y = height - total_text_height - 150
-    
-    # 畫每一行
     for i, line in enumerate(wrapped_lines):
-        # 取得這一行的寬度 (舊版 Pillow 相容寫法)
+        # 取得寬度
         try:
             line_w = draw.textlength(line, font=font)
         except:
-            line_w = len(line) * (font_size * 0.5) # 估算
+            line_w = len(line) * (font_size * 0.5)
 
         x = (width - line_w) / 2
         y = start_y + (i * line_height)
         
-        # 畫半透明黑底框框 (讓字更清楚)
-        padding = 10
+        # 畫半透明黑底 (讓字更明顯)
+        padding = 15
         draw.rectangle(
             [x - padding, y - padding, x + line_w + padding, y + line_height - padding + 5], 
-            fill=(0, 0, 0, 120) # 黑色半透明
+            fill=(0, 0, 0, 160)
         )
         
         # 畫白字
@@ -169,27 +144,22 @@ def create_subtitle(text, width, height):
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🇺🇸 AI Shorts Maker (Pro)")
+st.title("🇺🇸 AI Shorts Maker (Big Text)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     
-    # === 1. API Key 設定與狀態燈 ===
+    # === 1. API Key ===
     gemini_input = st.text_input("Gemini Key", type="password")
     pexels_input = st.text_input("Pexels Key", type="password")
     
     gemini_key = gemini_input if gemini_input else st.secrets.get("GEMINI_KEY", "")
     pexels_key = pexels_input if pexels_input else st.secrets.get("PEXELS_KEY", "")
     
-    if gemini_key:
-        st.success("✅ Gemini Key Ready")
-    else:
-        st.warning("⚠️ Missing Gemini Key")
-        
-    if pexels_key:
-        st.success("✅ Pexels Key Ready")
-    else:
-        st.warning("⚠️ Missing Pexels Key")
+    if gemini_key: st.success("✅ Gemini Key Ready")
+    else: st.warning("⚠️ Missing Gemini Key")
+    if pexels_key: st.success("✅ Pexels Key Ready")
+    else: st.warning("⚠️ Missing Pexels Key")
 
     st.divider()
 
@@ -205,17 +175,25 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 快速試聽 (修復版)
+    # 🔊 快速試聽 (修復版：存檔再讀取)
     if st.button("🔊 Test Voice Now"):
-        test_text = "Hello! Creating a great video for you."
+        preview_file = "preview_test.mp3"
+        test_text = "Hello! This is a test. The subtitle is now much bigger."
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
         
-        # 使用記憶體版 TTS，不存硬碟
-        audio_io = run_tts_memory(test_text, voice_role, rate_str)
+        # 1. 刪除舊檔
+        if os.path.exists(preview_file):
+            os.remove(preview_file)
+            
+        # 2. 生成新檔
+        success = run_tts_sync(test_text, preview_file, voice_role, rate_str)
         
-        if audio_io:
-            st.audio(audio_io, format="audio/mp3")
-            st.caption("☝️ If you can hear this, sound works!")
+        # 3. 讀取並播放 (最穩定的方法)
+        if success and os.path.exists(preview_file):
+            with open(preview_file, "rb") as f:
+                audio_bytes = f.read()
+            st.audio(audio_bytes, format="audio/mp3")
+            st.caption("☝️ Sound check successful!")
         else:
             st.error("❌ Audio failed.")
 
@@ -270,8 +248,8 @@ if st.session_state.script:
                 
                 rate_str = f"{int((rate - 1.0) * 100):+d}%"
                 
-                # 存檔用於合成
-                run_tts_file(data['text'], a_file, voice_role, rate_str)
+                # 語音
+                run_tts_sync(data['text'], a_file, voice_role, rate_str)
                 
                 try:
                     if os.path.exists(a_file):
@@ -294,7 +272,7 @@ if st.session_state.script:
                     if a_clip:
                         v_clip = v_clip.set_audio(a_clip)
                     
-                    # 製作優化版字幕
+                    # 字幕 (現在是大字體！)
                     txt_img = create_subtitle(data['text'], VIDEO_W, VIDEO_H)
                     txt_clip = ImageClip(txt_img).set_duration(final_dur)
                     
