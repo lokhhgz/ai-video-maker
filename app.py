@@ -67,25 +67,22 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (產生語音檔案) - 核心函式
-async def get_voice(text, voice, rate):
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
-    data = b""
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            data += chunk["data"]
-    return data
-
-# 🔄 穩定的同步執行器 (解決試聽報錯的關鍵)
-def run_async_tts(text, voice, rate):
+# 🗣️ TTS (產生語音檔案) - 改回最穩定的「存檔」模式
+def run_tts_sync(text, filename, voice, rate):
+    async def _tts():
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        await communicate.save(filename)
+    
     try:
-        # 嘗試使用標準 asyncio.run (最穩定)
-        return asyncio.run(get_voice(text, voice, rate))
-    except RuntimeError:
-        # 如果因為環境問題報錯 (Event loop is already running)，改用這種方式
+        # 建立全新的事件迴圈，避免 Streamlit 衝突
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        return loop.run_until_complete(get_voice(text, voice, rate))
+        loop.run_until_complete(_tts())
+        loop.close()
+        return True
+    except Exception as e:
+        print(f"TTS Error: {e}")
+        return False
 
 # 🖼️ 製作英文字幕
 def create_subtitle(text, width, height):
@@ -116,6 +113,7 @@ with st.sidebar:
     gemini_key = gemini_input if gemini_input else st.secrets.get("GEMINI_KEY", "")
     pexels_key = pexels_input if pexels_input else st.secrets.get("PEXELS_KEY", "")
     
+    # 這裡顯示綠色打勾
     if gemini_key:
         st.success("✅ Gemini Key Ready")
     else:
@@ -140,22 +138,25 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 側邊欄快速試聽按鈕 (已修復錯誤)
+    # 🔊 側邊欄快速試聽按鈕 (已修復)
     if st.button("🔊 Test Voice Now"):
-        try:
-            test_text = "Hello! This is a test. How do I sound?"
-            rate_str = f"{int((rate - 1.0) * 100):+d}%"
+        test_file = "preview_test.mp3"
+        rate_str = f"{int((rate - 1.0) * 100):+d}%"
+        test_text = "Hello! This is a test. How do I sound?"
+        
+        # 1. 刪除舊檔 (避免讀到舊的)
+        if os.path.exists(test_file):
+            os.remove(test_file)
             
-            # 使用修復後的執行器
-            test_audio = run_async_tts(test_text, voice_role, rate_str)
-            
-            if test_audio and len(test_audio) > 0:
-                st.audio(test_audio, format="audio/mp3")
-                st.caption("☝️ Preview of current settings")
-            else:
-                st.error("❌ Audio generation failed (Empty data).")
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
+        # 2. 生成新檔
+        success = run_tts_sync(test_text, test_file, voice_role, rate_str)
+        
+        # 3. 播放
+        if success and os.path.exists(test_file):
+            st.audio(test_file, format="audio/mp3")
+            st.caption("☝️ Preview of current settings")
+        else:
+            st.error("❌ Audio generation failed.")
 
     st.divider()
     duration = st.slider("Duration (sec)", 15, 300, 30, 5)
@@ -208,10 +209,8 @@ if st.session_state.script:
                 
                 rate_str = f"{int((rate - 1.0) * 100):+d}%"
                 
-                # 使用修復後的執行器
-                wav_data = run_async_tts(data['text'], voice_role, rate_str)
-                with open(a_file, "wb") as f:
-                    f.write(wav_data)
+                # 使用修復後的同步 TTS
+                run_tts_sync(data['text'], a_file, voice_role, rate_str)
                 
                 try:
                     if os.path.exists(a_file):
