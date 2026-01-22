@@ -6,6 +6,7 @@ import edge_tts
 import json
 import random
 import gc
+import textwrap
 import base64
 import google.generativeai as genai
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, ColorClip
@@ -13,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 設定區 =================
-st.set_page_config(page_title="AI Shorts Maker (Fixed Font Size)", page_icon="🇺🇸")
+st.set_page_config(page_title="AI Shorts Maker (Pro)", page_icon="🎬")
 
 # 📉 解析度設定
 VIDEO_W, VIDEO_H = 540, 960 
@@ -67,7 +68,7 @@ def generate_script(api_key, topic, duration):
             continue
     return None
 
-# 📥 下載影片
+# 📥 下載影片素材
 def download_video(api_key, query, filename):
     url = "https://api.pexels.com/videos/search"
     headers = {"Authorization": api_key}
@@ -114,59 +115,46 @@ def run_tts_file(text, filename, voice, rate):
     except:
         return False
 
-# 🖼️ 製作字幕 (🔥 改用像素寬度精準換行)
+# 🖼️ 製作字幕 (智慧換行版)
 def create_subtitle(text, width, height):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 1. 固定字體大小為 32px (或你想要的適中大小)
-    fixed_size = 32
+    fixed_size = 32 # 這是你覺得適中的大小
     font = get_font(fixed_size)
-    safe_width = width - 60 # 兩邊各留 30px 邊界
+    safe_width = width - 60 
     
-    # 2. 智慧像素換行邏輯
     words = text.split(' ')
     lines = []
     current_line = []
     
     for word in words:
-        # 測試加上這個單字後是否會太寬
         test_line = ' '.join(current_line + [word])
         w = draw.textlength(test_line, font=font)
-        
         if w <= safe_width:
             current_line.append(word)
         else:
-            # 太寬了，把目前的內容存為一行，新的單字放到下一行
             lines.append(' '.join(current_line))
             current_line = [word]
-    
     if current_line:
         lines.append(' '.join(current_line))
         
-    # 3. 計算繪製位置與背景
     line_height = fixed_size + 12
     total_height = len(lines) * line_height
-    start_y = height - total_height - 120 # 固定在中偏下位置
+    start_y = height - total_height - 120 
     
     for i, line in enumerate(lines):
         line_w = draw.textlength(line, font=font)
         x = (width - line_w) / 2
         y = start_y + (i * line_height)
-        
-        # 畫半透明底色
         pad = 8
-        draw.rectangle(
-            [x - pad, y - pad/2, x + line_w + pad, y + line_height - pad], 
-            fill=(0, 0, 0, 160)
-        )
-        # 畫文字
+        draw.rectangle([x-pad, y-pad/2, x+line_w+pad, y+line_height-pad], fill=(0,0,0,160))
         draw.text((x, y), line, font=font, fill="white")
     
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🇺🇸 AI Shorts Maker (Clean Subtitles)")
+st.title("🎬 AI Shorts Maker (Pro)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -190,7 +178,7 @@ with st.sidebar:
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
     if st.button("🔊 Test Voice Now"):
-        test_text = "This is a test. My font size will remain consistent and clear."
+        test_text = "This is a test. My subtitles will be perfectly centered."
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
         audio_bytes = run_tts_bytes(test_text, voice_role, rate_str)
         if audio_bytes:
@@ -202,7 +190,6 @@ with st.sidebar:
     duration = st.slider("Duration (sec)", 15, 300, 30, 5)
 
 # --- 右側主畫面 ---
-
 if "script" not in st.session_state:
     st.session_state.script = None
 
@@ -230,10 +217,7 @@ if st.session_state.script:
         try:
             for i, data in enumerate(st.session_state.script):
                 status.write(f"Processing scene {i+1}...")
-                
-                v_file = f"v_{i}.mp4"
-                a_file = f"a_{i}.mp3"
-                
+                v_file, a_file = f"v_{i}.mp4", f"a_{i}.mp3"
                 download_video(pexels_key, data['keyword'], v_file)
                 run_tts_file(data['text'], a_file, voice_role, f"{int((rate - 1.0) * 100):+d}%")
                 
@@ -247,17 +231,12 @@ if st.session_state.script:
                     final_dur = a_clip.duration
                     v_clip = v_clip.loop(duration=final_dur) if v_clip.duration < final_dur else v_clip.subclip(0, final_dur)
                     v_clip = v_clip.set_audio(a_clip)
-                    
-                    # 製作固定大小的字幕
                     txt_img = create_subtitle(data['text'], VIDEO_W, VIDEO_H)
                     txt_clip = ImageClip(txt_img).set_duration(final_dur)
-                    
                     clips.append(CompositeVideoClip([v_clip, txt_clip]))
                     del v_clip, a_clip, txt_clip
                     gc.collect()
-                except:
-                    continue
-                
+                except: continue
                 progress_bar.progress((i + 1) / len(st.session_state.script))
             
             if clips:
@@ -265,6 +244,25 @@ if st.session_state.script:
                 output_path = f"final_{random.randint(1000,9999)}.mp4"
                 final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac', preset='ultrafast')
                 status.update(label="✅ Done!", state="complete")
-                st.video(output_path)
+                
+                st.divider()
+                st.subheader("📺 Final Preview")
+                
+                # 【優化 1】將影片預覽縮小
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    st.video(output_path)
+                
+                # 【優化 2】加入下載按鈕
+                with open(output_path, "rb") as file:
+                    st.download_button(
+                        label="📥 Download Video",
+                        data=file,
+                        file_name=f"ai_video_{topic.replace(' ','_')}.mp4",
+                        mime="video/mp4",
+                        type="primary",
+                        use_container_width=True
+                    )
+                st.balloons()
         except Exception as e:
             st.error(f"Failed: {e}")
