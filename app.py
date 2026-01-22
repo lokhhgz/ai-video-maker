@@ -6,13 +6,13 @@ import edge_tts
 import json
 import random
 import google.generativeai as genai
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, ColorClip
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-import importlib.metadata # 用來檢查版本
+import importlib.metadata
 
 # ================= 雲端設定區 =================
-st.set_page_config(page_title="AI 短影音工廠 (未來版)", page_icon="🚀")
+st.set_page_config(page_title="AI 短影音工廠 (保底版)", page_icon="🛡️")
 
 # 📥 自動下載中文字體
 def download_font():
@@ -33,23 +33,21 @@ def get_font(size=80):
         return ImageFont.truetype(font_path, size)
     return ImageFont.load_default()
 
-# 🧠 AI 寫腳本 (針對你的帳號特製版)
+# 🧠 AI 寫腳本 (你的未來帳號專用版)
 def generate_script_from_ai(api_key, topic, duration_sec):
     genai.configure(api_key=api_key)
     est_sentences = int(int(duration_sec) / 4.5)
     if est_sentences < 3: est_sentences = 3
     
-    # 🌟 這裡根據你的診斷報告，改用你帳號裡有的模型！
+    # 使用你帳號裡有的模型
     models_to_try = [
-        'gemini-flash-latest',     # 這是你的清單裡有的！
-        'gemini-2.0-flash',        # 你也有這個
-        'gemini-2.5-flash',        # 你甚至有這個未來模型
-        'gemini-pro-latest'        # 保底用
+        'gemini-flash-latest', 
+        'gemini-2.0-flash', 
+        'gemini-pro-latest'
     ]
     
     for model_name in models_to_try:
         try:
-            print(f"正在嘗試模型: {model_name}")
             model = genai.GenerativeModel(model_name)
             prompt = f"""
             你是一個短影音腳本專家。請根據主題「{topic}」寫出一個短影音腳本。
@@ -64,34 +62,27 @@ def generate_script_from_ai(api_key, topic, duration_sec):
             response = model.generate_content(prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
-        except Exception as e:
-            # 顯示黃色警告，讓我們知道哪個模型失敗了，程式會自動試下一個
-            st.warning(f"⚠️ 模型 {model_name} 回應: {e}")
+        except:
             continue
     return None
 
 # 📥 下載影片
 def download_video(api_key, query, filename):
     url = "https://api.pexels.com/videos/search"
-    headers = {
-        "Authorization": api_key,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    headers = {"Authorization": api_key}
     params = {"query": query, "per_page": 1, "orientation": "portrait"}
-    
     try:
-        r = requests.get(url, headers=headers, params=params, timeout=15)
+        r = requests.get(url, headers=headers, params=params, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            if data.get('videos') and len(data['videos']) > 0:
+            if data.get('videos'):
                 video_url = data['videos'][0]['video_files'][0]['link']
-                v_r = requests.get(video_url, headers=headers, timeout=30)
-                if v_r.status_code == 200:
-                    with open(filename, 'wb') as f:
-                        f.write(v_r.content)
-                    return True
-    except Exception as e:
-        print(f"Download fail: {e}")
+                v_data = requests.get(video_url).content
+                with open(filename, 'wb') as f:
+                    f.write(v_data)
+                return True
+    except:
+        pass
     return False
 
 # 🗣️ TTS
@@ -136,97 +127,86 @@ def create_text_image(text, width, height):
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🚀 AI 短影音工廠 (未來版)")
-
-# 顯示環境檢查 (確保我們用了正確的庫)
-try:
-    ver = importlib.metadata.version("google-generativeai")
-    st.caption(f"🔧 Google AI 核心版本: {ver} (應 >= 0.8.3)")
-except:
-    pass
-
+st.title("🛡️ AI 短影音工廠 (保底版)")
 download_font()
 
 with st.sidebar:
-    st.header("⚙️ 參數設定")
-    gemini_key_input = st.text_input("Gemini API Key", type="password")
-    pexels_key_input = st.text_input("Pexels API Key", type="password")
-    
-    gemini_key = gemini_key_input if gemini_key_input else st.secrets.get("GEMINI_KEY", "")
-    pexels_key = pexels_key_input if pexels_key_input else st.secrets.get("PEXELS_KEY", "")
-    
-    if st.secrets.get("GEMINI_KEY"): st.caption("✅ 已啟用雲端 Gemini 金鑰")
-    if st.secrets.get("PEXELS_KEY"): st.caption("✅ 已啟用雲端 Pexels 金鑰")
-
-    st.divider()
-    voice_option = st.selectbox("配音員", ("女聲 - 曉臻", "男聲 - 雲哲"))
+    st.header("⚙️ 設定")
+    gemini_key = st.text_input("Gemini Key", type="password") or st.secrets.get("GEMINI_KEY", "")
+    pexels_key = st.text_input("Pexels Key", type="password") or st.secrets.get("PEXELS_KEY", "")
+    voice_option = st.selectbox("配音", ("女聲 - 曉臻", "男聲 - 雲哲"))
     voice_role = "zh-TW-HsiaoChenNeural" if "女聲" in voice_option else "zh-TW-YunJheNeural"
-    speech_rate = st.slider("語速調整", 0.5, 2.0, 1.2, 0.1)
-    duration = st.slider("影片目標長度 (秒)", 30, 300, 45, 10)
+    speech_rate = st.slider("語速", 0.5, 2.0, 1.2, 0.1)
+    duration = st.slider("秒數", 30, 300, 45, 10)
 
-topic = st.text_input("💡 請輸入影片主題", placeholder="例如：未來的交通工具")
+topic = st.text_input("💡 主題", value="飛機的起源")
 
-if st.button("🚀 開始生成影片", type="primary"):
+if st.button("🚀 生成影片", type="primary"):
     if not gemini_key or not pexels_key:
-        st.error("❌ 缺少 API Key！")
-    elif not topic:
-        st.error("❌ 請輸入主題")
-    else:
-        status = st.status("🧠 正在構思劇本...", expanded=True)
+        st.error("❌ 缺 Key")
+        st.stop()
+        
+    status = st.status("🧠 正在運作中...", expanded=True)
+    
+    # 1. 劇本
+    script_data = generate_script_from_ai(gemini_key, topic, duration)
+    if not script_data:
+        status.update(label="❌ 劇本失敗", state="error")
+        st.stop()
+    
+    status.write(f"✅ 劇本完成！共 {len(script_data)} 句")
+    progress_bar = st.progress(0)
+    clips = []
+    
+    # 2. 製作
+    for i, data in enumerate(script_data):
+        status.write(f"正在製作: {data['keyword']}...")
+        
+        safe_kw = "".join([c for c in data['keyword'] if c.isalnum()])
+        v_file = f"video_{safe_kw}.mp4"
+        a_file = f"temp_{i}.mp3"
+        
+        # 下載影片 & 生成語音
+        download_video(pexels_key, data['keyword'], v_file)
+        run_tts(data['text'], a_file, voice_role, speech_rate)
+        
         try:
-            # 1. 生成劇本
-            script_data = generate_script_from_ai(gemini_key, topic, duration)
-            if not script_data:
-                status.update(label="❌ 劇本生成失敗", state="error")
-                st.error("👉 所有模型都失敗了。如果出現 429 錯誤，代表你的免費額度已用完，或此模型不支援免費版。")
-                st.stop()
+            # 嘗試讀取音訊
+            a_clip = AudioFileClip(a_file)
             
-            status.write(f"✅ 劇本完成！共 {len(script_data)} 個分鏡")
-            progress_bar = st.progress(0)
-            clips = []
-            
-            # 2. 製作片段
-            for i, data in enumerate(script_data):
-                status.write(f"正在製作第 {i+1} 個片段: {data['keyword']}...")
-                
-                safe_kw = "".join([c for c in data['keyword'] if c.isalnum()])
-                v_file = f"video_{safe_kw}.mp4"
-                a_file = f"temp_{i}.mp3"
-                
-                if not download_video(pexels_key, data['keyword'], v_file):
-                    # 備案：如果找不到關鍵字影片，用通用影片
-                    if not download_video(pexels_key, "Abstract", "video_fallback.mp4"):
-                        continue
-                    v_file = "video_fallback.mp4"
-                
-                run_tts(data['text'], a_file, voice_role, speech_rate)
-                
-                try:
+            # 【關鍵修改】嘗試讀取影片，失敗就用黑底
+            try:
+                if os.path.exists(v_file) and os.path.getsize(v_file) > 1000:
                     v_clip = VideoFileClip(v_file).resize(newsize=(1080, 1920))
-                    a_clip = AudioFileClip(a_file)
-                    if a_clip.duration > v_clip.duration:
+                    # 如果影片比聲音短，就循環
+                    if v_clip.duration < a_clip.duration:
                         v_clip = v_clip.loop(duration=a_clip.duration)
                     else:
                         v_clip = v_clip.subclip(0, a_clip.duration)
-                    
-                    v_clip = v_clip.set_audio(a_clip)
-                    txt_clip = ImageClip(create_text_image(data['text'], 1080, 1920)).set_duration(a_clip.duration)
-                    clips.append(CompositeVideoClip([v_clip, txt_clip]))
-                    
-                except Exception as e:
-                    print(f"Clip error: {e}")
-                
-                progress_bar.progress((i + 1) / len(script_data))
+                else:
+                    raise Exception("File empty")
+            except Exception as e:
+                # 🟡 如果影片壞掉，顯示警告並用黑色背景取代
+                st.warning(f"⚠️ 片段 {i+1} 影片讀取失敗 ({e})，改用純色背景保底。")
+                v_clip = ColorClip(size=(1080, 1920), color=(0,0,0), duration=a_clip.duration)
             
-            if clips:
-                status.write("🎬 正在合成最終影片...")
-                final = concatenate_videoclips(clips)
-                output_name = f"result_{random.randint(1000,9999)}.mp4"
-                final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac')
-                status.update(label="✨ 製作完成！", state="complete")
-                st.video(output_name)
-            else:
-                status.update(label="❌ 製作失敗", state="error")
-                
+            # 合成音訊與字幕
+            v_clip = v_clip.set_audio(a_clip)
+            txt_clip = ImageClip(create_text_image(data['text'], 1080, 1920)).set_duration(a_clip.duration)
+            clips.append(CompositeVideoClip([v_clip, txt_clip]))
+            
         except Exception as e:
-            st.error(f"系統錯誤: {e}")
+            st.error(f"❌ 嚴重錯誤: {e}")
+        
+        progress_bar.progress((i + 1) / len(script_data))
+    
+    if clips:
+        status.write("🎬 正在合成最終影片...")
+        final = concatenate_videoclips(clips)
+        output_name = f"result_{random.randint(1000,9999)}.mp4"
+        final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac')
+        status.update(label="✨ 大功告成！", state="complete")
+        st.balloons()
+        st.video(output_name)
+    else:
+        status.update(label="❌ 製作失敗", state="error")
