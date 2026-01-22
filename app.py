@@ -7,19 +7,20 @@ import json
 import random
 import gc
 import textwrap
+import base64
 import google.generativeai as genai
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, ColorClip
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 設定區 =================
-st.set_page_config(page_title="AI Shorts Maker (Perfect)", page_icon="🇺🇸")
+st.set_page_config(page_title="AI Shorts Maker (Clean Ver.)", page_icon="🇺🇸")
 
-# 📉 解析度設定 (維持輕量化)
+# 📉 解析度設定
 VIDEO_W, VIDEO_H = 540, 960 
 
 # 🔤 字體設定
-def get_font(size=40):
+def get_font(size=32):
     # 優先尋找 Linux 系統字體
     system_fonts = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 
@@ -34,25 +35,27 @@ def get_font(size=40):
                 continue
     return ImageFont.load_default()
 
-# 🧠 AI 寫英文腳本
+# 🧠 AI 寫英文腳本 (關鍵修改：強迫 AI 寫短句)
 def generate_script(api_key, topic, duration):
     genai.configure(api_key=api_key)
-    # 句數計算
-    est_sentences = int(int(duration) / 5)
+    # 句數稍微增加，因為句子變短了
+    est_sentences = int(int(duration) / 4)
     if est_sentences < 3: est_sentences = 3
     
     prompt = f"""
-    You are a short video script writer. Create a script about topic: "{topic}".
+    You are a professional short video script writer. Create a script about topic: "{topic}".
     Target duration: {duration} seconds.
     Generate exactly {est_sentences} sentences.
-    Requirements:
+    
+    CRITICAL REQUIREMENTS:
     1. Language: English.
-    2. Length: Each sentence should be 10-15 words.
-    3. Keyword: Provide 1 English search keyword for stock video.
-    4. Format: Return ONLY a raw JSON array:
+    2. Length: KEEP SENTENCES VERY SHORT. Max 8-10 words per sentence.
+    3. Style: Punchy, engaging, and easy to read.
+    4. Keyword: Provide 1 English search keyword for stock video.
+    5. Format: Return ONLY a raw JSON array:
     [
-        {{"text": "First sentence...", "keyword": "Airplane"}},
-        {{"text": "Second sentence...", "keyword": "Sky"}}
+        {{"text": "Coffee originated in Ethiopia.", "keyword": "Ethiopia"}},
+        {{"text": "Goats discovered the beans first.", "keyword": "Goat"}}
     ]
     """
     
@@ -85,41 +88,55 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (同步版) - 核心引擎
-def run_tts_sync(text, filename, voice, rate):
-    async def _tts():
+# 🗣️ TTS (試聽用 - Base64 暴力嵌入)
+def run_tts_bytes(text, voice, rate):
+    async def _gen():
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                data += chunk["data"]
+        return data
+
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_gen())
+    except Exception as e:
+        print(f"TTS Error: {e}")
+        return None
+
+# 🗣️ TTS (合成用 - 存檔)
+def run_tts_file(text, filename, voice, rate):
+    async def _save():
         communicate = edge_tts.Communicate(text, voice, rate=rate)
         await communicate.save(filename)
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(_tts())
-        loop.close()
+        loop.run_until_complete(_save())
         return True
-    except Exception as e:
-        print(f"TTS Error: {e}")
+    except:
         return False
 
-# 🖼️ 製作字幕 (修正版：大小適中，位置偏下)
+# 🖼️ 製作字幕 (視覺優化：字體 32，位置偏下)
 def create_subtitle(text, width, height):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 【修正 1】字體大小改為 40 (原本 80 太大了)
-    font_size = 40
+    # 【修改 1】字體大小：32 (精緻適中，不會像老人機)
+    font_size = 32
     font = get_font(font_size)
     
-    # 【修正 2】自動換行寬度增加 (一行可以塞更多字，不會變直排)
-    # 540px 寬度，字體 40px，大約每行可放 25-30 個字母
-    wrapped_lines = textwrap.wrap(text, width=28)
+    # 【修改 2】換行寬度：35 (讓每一行長一點，減少行數)
+    wrapped_lines = textwrap.wrap(text, width=35)
     
     # 計算高度
     line_height = font_size + 10
     total_height = len(wrapped_lines) * line_height
     
-    # 【修正 3】位置設定：螢幕下方往上算 120px 處
-    # 這樣會剛好在「中間偏下」，又不會擋到底部
-    start_y = height - total_height - 120 
+    # 【修改 3】位置：固定在底部往上 100px (留一點呼吸空間)
+    start_y = height - total_height - 100
     
     for i, line in enumerate(wrapped_lines):
         try:
@@ -130,29 +147,27 @@ def create_subtitle(text, width, height):
         x = (width - line_w) / 2
         y = start_y + (i * line_height)
         
-        # 畫半透明黑底 (稍微圓潤一點的 Padding)
-        padding_x = 10
-        padding_y = 5
+        # 半透明黑底 (圓角感 Padding)
+        padding_x = 12
+        padding_y = 6
         draw.rectangle(
             [x - padding_x, y - padding_y, x + line_w + padding_x, y + line_height - padding_y], 
-            fill=(0, 0, 0, 140) # 黑色半透明
+            fill=(0, 0, 0, 160)
         )
         
-        # 畫白字
+        # 白字
         draw.text((x, y), line, font=font, fill="white")
     
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🇺🇸 AI Shorts Maker (Perfect)")
+st.title("🇺🇸 AI Shorts Maker (Clean Ver.)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     
-    # === 1. API Key ===
     gemini_input = st.text_input("Gemini Key", type="password")
     pexels_input = st.text_input("Pexels Key", type="password")
-    
     gemini_key = gemini_input if gemini_input else st.secrets.get("GEMINI_KEY", "")
     pexels_key = pexels_input if pexels_input else st.secrets.get("PEXELS_KEY", "")
     
@@ -163,7 +178,6 @@ with st.sidebar:
 
     st.divider()
 
-    # === 2. 配音設定 ===
     voice_map = {
         "Female (Ava)": "en-US-AvaNeural",
         "Male (Andrew)": "en-US-AndrewNeural",
@@ -175,30 +189,21 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 快速試聽 (快取殺手版)
+    # 🔊 快速試聽 (Base64)
     if st.button("🔊 Test Voice Now"):
-        # 生成一個隨機檔名，強迫瀏覽器重新讀取
-        rand_id = random.randint(1000, 9999)
-        preview_file = f"preview_{rand_id}.mp3"
-        
-        test_text = "Hello! This is the perfect subtitle size. I hope you like it!"
+        test_text = "Hello! The subtitles are now clean and perfect size."
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
-        
-        # 清理舊檔案 (如果有其他殘留)
-        for f in os.listdir():
-            if f.startswith("preview_") and f.endswith(".mp3"):
-                try: os.remove(f)
-                except: pass
-
-        # 生成
-        success = run_tts_sync(test_text, preview_file, voice_role, rate_str)
-        
-        # 讀取並播放
-        if success and os.path.exists(preview_file):
-            st.audio(preview_file, format="audio/mp3")
-            st.caption(f"☝️ Preview ID: {rand_id}")
+        audio_bytes = run_tts_bytes(test_text, voice_role, rate_str)
+        if audio_bytes:
+            b64 = base64.b64encode(audio_bytes).decode()
+            md = f"""
+                <audio controls autoplay>
+                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+                </audio>
+                """
+            st.markdown(md, unsafe_allow_html=True)
         else:
-            st.error("❌ Audio failed. Please check internet.")
+            st.error("❌ Audio failed.")
 
     st.divider()
     duration = st.slider("Duration (sec)", 15, 300, 30, 5)
@@ -210,7 +215,6 @@ if "script" not in st.session_state:
 
 topic = st.text_input("Topic", "The history of Coffee")
 
-# Step 1
 if st.button("Step 1: Generate Script", type="primary"):
     if not gemini_key or not pexels_key:
         st.error("Please provide API Keys first!")
@@ -224,7 +228,6 @@ if st.button("Step 1: Generate Script", type="primary"):
         else:
             st.error("Failed to generate script.")
 
-# 顯示劇本
 if st.session_state.script:
     st.subheader("📝 Script Preview")
     for i, item in enumerate(st.session_state.script):
@@ -232,7 +235,6 @@ if st.session_state.script:
 
     st.divider()
 
-    # Step 2
     if st.button("Step 2: Render Video", type="primary"):
         status = st.status("🎬 Rendering video... Please wait.", expanded=True)
         progress_bar = st.progress(0)
@@ -248,11 +250,9 @@ if st.session_state.script:
                 a_file = f"a_{i}.mp3"
                 
                 download_video(pexels_key, data['keyword'], v_file)
-                
                 rate_str = f"{int((rate - 1.0) * 100):+d}%"
                 
-                # 語音
-                run_tts_sync(data['text'], a_file, voice_role, rate_str)
+                run_tts_file(data['text'], a_file, voice_role, rate_str)
                 
                 try:
                     if os.path.exists(a_file):
@@ -275,7 +275,7 @@ if st.session_state.script:
                     if a_clip:
                         v_clip = v_clip.set_audio(a_clip)
                     
-                    # 字幕 (修正後)
+                    # 製作優化版字幕
                     txt_img = create_subtitle(data['text'], VIDEO_W, VIDEO_H)
                     txt_clip = ImageClip(txt_img).set_duration(final_dur)
                     
