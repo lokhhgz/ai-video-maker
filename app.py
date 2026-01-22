@@ -21,7 +21,6 @@ VIDEO_W, VIDEO_H = 540, 960
 
 # 🔤 字體設定
 def get_font(size=32):
-    # 優先尋找 Linux 系統字體
     system_fonts = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -35,10 +34,9 @@ def get_font(size=32):
                 continue
     return ImageFont.load_default()
 
-# 🧠 AI 寫英文腳本 (關鍵修改：強迫 AI 寫短句)
+# 🧠 AI 寫英文腳本
 def generate_script(api_key, topic, duration):
     genai.configure(api_key=api_key)
-    # 句數稍微增加，因為句子變短了
     est_sentences = int(int(duration) / 4)
     if est_sentences < 3: est_sentences = 3
     
@@ -88,7 +86,7 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (試聽用 - Base64 暴力嵌入)
+# 🗣️ TTS (試聽用 - Base64)
 def run_tts_bytes(text, voice, rate):
     async def _gen():
         communicate = edge_tts.Communicate(text, voice, rate=rate)
@@ -119,23 +117,17 @@ def run_tts_file(text, filename, voice, rate):
     except:
         return False
 
-# 🖼️ 製作字幕 (視覺優化：字體 32，位置偏下)
+# 🖼️ 製作字幕 (視覺優化)
 def create_subtitle(text, width, height):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 【修改 1】字體大小：32 (精緻適中，不會像老人機)
     font_size = 32
     font = get_font(font_size)
-    
-    # 【修改 2】換行寬度：35 (讓每一行長一點，減少行數)
     wrapped_lines = textwrap.wrap(text, width=35)
     
-    # 計算高度
     line_height = font_size + 10
     total_height = len(wrapped_lines) * line_height
-    
-    # 【修改 3】位置：固定在底部往上 100px (留一點呼吸空間)
     start_y = height - total_height - 100
     
     for i, line in enumerate(wrapped_lines):
@@ -147,7 +139,6 @@ def create_subtitle(text, width, height):
         x = (width - line_w) / 2
         y = start_y + (i * line_height)
         
-        # 半透明黑底 (圓角感 Padding)
         padding_x = 12
         padding_y = 6
         draw.rectangle(
@@ -155,7 +146,6 @@ def create_subtitle(text, width, height):
             fill=(0, 0, 0, 160)
         )
         
-        # 白字
         draw.text((x, y), line, font=font, fill="white")
     
     return np.array(img)
@@ -189,7 +179,7 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 快速試聽 (Base64)
+    # 🔊 快速試聽
     if st.button("🔊 Test Voice Now"):
         test_text = "Hello! The subtitles are now clean and perfect size."
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
@@ -215,6 +205,7 @@ if "script" not in st.session_state:
 
 topic = st.text_input("Topic", "The history of Coffee")
 
+# Step 1
 if st.button("Step 1: Generate Script", type="primary"):
     if not gemini_key or not pexels_key:
         st.error("Please provide API Keys first!")
@@ -228,13 +219,16 @@ if st.button("Step 1: Generate Script", type="primary"):
         else:
             st.error("Failed to generate script.")
 
+# 顯示劇本 (【修正重點】：改用 markdown 以便自動換行)
 if st.session_state.script:
     st.subheader("📝 Script Preview")
     for i, item in enumerate(st.session_state.script):
-        st.text(f"{i+1}. [{item['keyword']}] {item['text']}")
+        # 使用 markdown，並將關鍵字加粗
+        st.markdown(f"**{i+1}. [{item['keyword']}]** {item['text']}")
 
     st.divider()
 
+    # Step 2
     if st.button("Step 2: Render Video", type="primary"):
         status = st.status("🎬 Rendering video... Please wait.", expanded=True)
         progress_bar = st.progress(0)
